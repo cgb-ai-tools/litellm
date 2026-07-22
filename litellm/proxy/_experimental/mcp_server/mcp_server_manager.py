@@ -2579,20 +2579,21 @@ class MCPServerManager:
             return auth_value
         return None
 
-    def _obo_subject_token(
+    def _subject_bearer_token(
         self,
         server: MCPServer,
         raw_headers: Optional[dict[str, str]],
+        oauth2_headers: dict[str, str] | None = None,
     ) -> Optional[str]:
-        """The caller's bearer as the token_exchange (OBO) subject token, for that mode only.
-
-        Prompts/resources discovery and reads on a token_exchange server must exchange the caller's
-        token like the tools paths do, not connect with no credential. Other modes never read the
-        inbound bearer, so return None to avoid forwarding it.
+        """The caller's bearer as the exchange subject material, resolved by the ONE rule every
+        egress surface shares: only the two exchange modes (token_exchange OBO and id_jag) read
+        the inbound bearer, and every surface (tools call and list, prompts, resources) resolves
+        it here so no surface can diverge (an id_jag caller presenting a fresh IdP JWT must see
+        the same sourcing on list as on call). Other modes return None to avoid forwarding it.
         """
-        if server.auth_type != MCPAuth.oauth2_token_exchange:
+        if server.auth_type not in (MCPAuth.oauth2_token_exchange, MCPAuth.oauth2_id_jag):
             return None
-        return self._extract_bearer_token(None, raw_headers)
+        return self._extract_bearer_token(oauth2_headers, raw_headers)
 
     def _build_stdio_env(
         self,
@@ -3122,14 +3123,7 @@ class MCPServerManager:
 
             stdio_env = self._build_stdio_env(server, raw_headers)
 
-            # token_exchange (OBO) discovery needs the caller's token too: list it with the user's own
-            # token (mirrors the call path), not v1's deleted client_credentials fallback. Other modes
-            # never read the inbound bearer, so leave subject_token None to avoid forwarding it.
-            subject_token = (
-                self._extract_bearer_token(oauth2_headers, raw_headers)
-                if server.auth_type == MCPAuth.oauth2_token_exchange
-                else None
-            )
+            subject_token = self._subject_bearer_token(server, raw_headers, oauth2_headers=oauth2_headers)
 
             client = await self._create_mcp_client(
                 server=server,
@@ -3234,7 +3228,7 @@ class MCPServerManager:
                 extra_headers.update(server.static_headers)
 
             stdio_env = self._build_stdio_env(server, raw_headers)
-            subject_token = self._obo_subject_token(server, raw_headers)
+            subject_token = self._subject_bearer_token(server, raw_headers)
 
             client = await self._create_mcp_client(
                 server=server,
@@ -3276,7 +3270,7 @@ class MCPServerManager:
                 extra_headers.update(server.static_headers)
 
             stdio_env = self._build_stdio_env(server, raw_headers)
-            subject_token = self._obo_subject_token(server, raw_headers)
+            subject_token = self._subject_bearer_token(server, raw_headers)
 
             client = await self._create_mcp_client(
                 server=server,
@@ -3318,7 +3312,7 @@ class MCPServerManager:
                 extra_headers.update(server.static_headers)
 
             stdio_env = self._build_stdio_env(server, raw_headers)
-            subject_token = self._obo_subject_token(server, raw_headers)
+            subject_token = self._subject_bearer_token(server, raw_headers)
 
             client = await self._create_mcp_client(
                 server=server,
@@ -3359,7 +3353,7 @@ class MCPServerManager:
             extra_headers.update(server.static_headers)
 
         stdio_env = self._build_stdio_env(server, raw_headers)
-        subject_token = self._obo_subject_token(server, raw_headers)
+        subject_token = self._subject_bearer_token(server, raw_headers)
 
         client = await self._create_mcp_client(
             server=server,
@@ -3391,7 +3385,7 @@ class MCPServerManager:
             extra_headers.update(server.static_headers)
 
         stdio_env = self._build_stdio_env(server, raw_headers)
-        subject_token = self._obo_subject_token(server, raw_headers)
+        subject_token = self._subject_bearer_token(server, raw_headers)
 
         client = await self._create_mcp_client(
             server=server,
@@ -4452,15 +4446,10 @@ class MCPServerManager:
         if server_auth_header is None:
             server_auth_header = mcp_auth_header
 
-        # Extract subject token for OAuth2 Token Exchange (OBO) and ID-JAG flows
-        subject_token: Optional[str] = None
+        subject_token: str | None = self._subject_bearer_token(mcp_server, raw_headers, oauth2_headers=oauth2_headers)
+        # The exchange modes leave extra_headers None (the resolver injects the minted bearer).
         extra_headers: Optional[dict[str, str]] = None
-        if mcp_server.auth_type in (
-            MCPAuth.oauth2_token_exchange,
-            MCPAuth.oauth2_id_jag,
-        ):
-            subject_token = self._extract_bearer_token(oauth2_headers, raw_headers)
-        elif mcp_server.auth_type == MCPAuth.oauth2:
+        if mcp_server.auth_type == MCPAuth.oauth2:
             if mcp_server.has_client_credentials:
                 # For M2M OAuth servers, Authorization must come from token fetch.
                 extra_headers = None
