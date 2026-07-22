@@ -1,6 +1,5 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { KeyMetricWithMetadata } from "@/components/UsagePage/types";
 import type { ToolSpendResponse } from "@/components/networking";
 
 import type { DailyData, SpendMetrics } from "@/components/UsagePage/types";
@@ -116,25 +115,6 @@ describe("UsageTab", () => {
 
     const slices = JSON.parse(getByTestId("donut-chart").getAttribute("data-slices") ?? "[]");
     expect(slices).toEqual([{ driver: "Compression", usd: expect.closeTo(0.04, 5) }]);
-  });
-
-  it("ranks leaking keys by uncached prompt tokens and shows cache hit ratio", () => {
-    const key = (alias: string, metrics: Partial<SpendMetrics>): KeyMetricWithMetadata => ({
-      metrics: baseMetrics(metrics),
-      metadata: { key_alias: alias, team_id: null },
-    });
-    const d = day("2026-07-12", {});
-    d.breakdown.api_keys = {
-      "hash-caching": key("caching-key", { prompt_tokens: 1000, cache_read_input_tokens: 900 }),
-      "hash-leaky": key("leaky-key", { prompt_tokens: 10000, cache_read_input_tokens: 0 }),
-    };
-
-    const { getByText, getAllByLabelText } = renderWith([d]);
-
-    expect(getByText("leaky-key")).toBeInTheDocument();
-    expect(getByText("0.0%")).toBeInTheDocument();
-    expect(getByText("90.0%")).toBeInTheDocument();
-    expect(getAllByLabelText("info-circle")).toHaveLength(4);
   });
 
   it("renders spend-by-tool bars from the tool spend endpoint", async () => {

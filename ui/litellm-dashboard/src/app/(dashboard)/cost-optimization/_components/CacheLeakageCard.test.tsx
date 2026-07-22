@@ -1,0 +1,88 @@
+import { render } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import type { DailyData, KeyMetricWithMetadata, SpendMetrics } from "@/components/UsagePage/types";
+
+const mockUsePaginatedDailyActivity = vi.fn();
+
+vi.mock("@/app/(dashboard)/usage/_components/hooks/usePaginatedDailyActivity", () => ({
+  usePaginatedDailyActivity: (args: unknown) => mockUsePaginatedDailyActivity(args),
+}));
+
+vi.mock("@/components/networking", () => ({
+  userDailyActivityCall: vi.fn(),
+}));
+
+vi.mock("@/components/shared/advanced_date_picker", () => ({
+  __esModule: true,
+  default: () => <div data-testid="date-picker" />,
+}));
+
+import CacheLeakageCard from "./CacheLeakageCard";
+
+const baseMetrics = (overrides: Partial<SpendMetrics>): SpendMetrics => ({
+  spend: 0,
+  prompt_tokens: 0,
+  completion_tokens: 0,
+  total_tokens: 0,
+  api_requests: 0,
+  successful_requests: 0,
+  failed_requests: 0,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 0,
+  ...overrides,
+});
+
+const key = (alias: string, metrics: Partial<SpendMetrics>): KeyMetricWithMetadata => ({
+  metrics: baseMetrics(metrics),
+  metadata: { key_alias: alias, team_id: null },
+});
+
+const dayWithKeys = (date: string, apiKeys: Record<string, KeyMetricWithMetadata>): DailyData => ({
+  date,
+  metrics: baseMetrics({}),
+  breakdown: {
+    models: {},
+    model_groups: {},
+    mcp_servers: {},
+    providers: {},
+    api_keys: apiKeys,
+    entities: {},
+  },
+});
+
+const renderWith = (results: DailyData[], userRole = "proxy_admin") => {
+  mockUsePaginatedDailyActivity.mockReturnValue({ data: { results }, loading: false, isFetchingMore: false });
+  return render(<CacheLeakageCard accessToken="test-token" userId="u1" userRole={userRole} />);
+};
+
+describe("CacheLeakageCard", () => {
+  it("ranks leaking keys by uncached prompt tokens and shows cache hit ratio", () => {
+    const { getByText, getAllByLabelText } = renderWith([
+      dayWithKeys("2026-07-12", {
+        "hash-caching": key("caching-key", { prompt_tokens: 1000, cache_read_input_tokens: 900 }),
+        "hash-leaky": key("leaky-key", { prompt_tokens: 10000, cache_read_input_tokens: 0 }),
+      }),
+    ]);
+
+    expect(getByText("leaky-key")).toBeInTheDocument();
+    expect(getByText("0.0%")).toBeInTheDocument();
+    expect(getByText("90.0%")).toBeInTheDocument();
+    expect(getAllByLabelText("info-circle")).toHaveLength(4);
+  });
+
+  it("shows an empty state when no key used tokens in the range", () => {
+    const { getByText, queryByRole } = renderWith([dayWithKeys("2026-07-12", {})]);
+
+    expect(getByText("No key usage in this range.")).toBeInTheDocument();
+    expect(queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("scopes the activity query to the caller when the user is not an admin", () => {
+    renderWith([dayWithKeys("2026-07-12", {})], "internal_user");
+
+    expect(mockUsePaginatedDailyActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ args: ["test-token", expect.any(Date), expect.any(Date), "u1"] }),
+    );
+  });
+});

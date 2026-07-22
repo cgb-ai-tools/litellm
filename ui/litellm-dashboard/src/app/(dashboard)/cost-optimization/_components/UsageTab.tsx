@@ -1,19 +1,17 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Collapse, Tooltip } from "antd";
-import { InfoCircleOutlined } from "@ant-design/icons";
+import { Collapse } from "antd";
 
 import { AreaChart, BarChart, DonutChart, DEFAULT_COLOR_CYCLE } from "@/components/shared/charts";
 import AdvancedDatePicker from "@/components/shared/advanced_date_picker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getToolSpend, ToolSpendResponse, userDailyActivityCall } from "@/components/networking";
 import { DailyData, SpendMetrics } from "@/components/UsagePage/types";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
 import { all_admin_roles } from "@/utils/roles";
 import { usePaginatedDailyActivity } from "@/app/(dashboard)/usage/_components/hooks/usePaginatedDailyActivity";
-import { buildDailyToolSeries, computeCacheLeakage, topToolsBySpend } from "./costOptimizationUtils";
+import { buildDailyToolSeries, topToolsBySpend, usd } from "./costOptimizationUtils";
 
 interface UsageTabProps {
   accessToken: string | null;
@@ -33,13 +31,6 @@ const EMPTY_TOOL_SPEND: ToolSpendResponse = {
   end_date: null,
 };
 
-const usd = (value: number): string => {
-  const decimals = value > 0 && value < 1 ? 4 : 2;
-  return `$${formatNumberWithCommas(value, decimals)}`;
-};
-
-const pct = (ratio: number): string => `${formatNumberWithCommas(ratio * 100, 1)}%`;
-
 const shortDate = (iso: string): string =>
   new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
@@ -48,15 +39,6 @@ const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
 const compressionOf = (m: SpendMetrics): number => m.compression_savings_spend ?? 0;
 const cachingOf = (m: SpendMetrics): number => m.prompt_caching_savings_spend ?? 0;
 const savedTokensOf = (m: SpendMetrics): number => m.compression_saved_tokens ?? 0;
-
-const HeadWithInfo = ({ label, info }: { label: string; info: string }) => (
-  <span className="inline-flex items-center gap-1">
-    {label}
-    <Tooltip title={info}>
-      <InfoCircleOutlined className="text-gray-400 text-xs" />
-    </Tooltip>
-  </span>
-);
 
 const MethodologyNote = () => (
   <Collapse
@@ -169,8 +151,6 @@ const UsageTab: React.FC<UsageTabProps> = ({ accessToken, userId, userRole }) =>
     [compressionTotal, cachingTotal],
   );
 
-  const leakage = useMemo(() => computeCacheLeakage(results), [results]);
-
   const topTools = useMemo(() => topToolsBySpend(toolSpend?.by_tool ?? []), [toolSpend]);
   const topToolNames = useMemo(() => topTools.map((t) => t.tool_name), [topTools]);
   const topToolsChart = useMemo<Record<string, string | number>[]>(
@@ -241,72 +221,6 @@ const UsageTab: React.FC<UsageTabProps> = ({ accessToken, userId, userRole }) =>
           </CardContent>
         </Card>
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Cache leakage by virtual key</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Keys sending large volumes of uncached prompt tokens with a low cache-hit ratio are likely missing prompt
-            caching. Estimated savings left is approximate: uncached prompt tokens priced at the portfolio&apos;s
-            realized cache-read discount.
-          </p>
-        </CardHeader>
-        <CardContent>
-          {leakage.rows.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              {loading || isFetchingMore ? "Loading..." : "No key usage in this range."}
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Key</TableHead>
-                  <TableHead className="text-right">
-                    <HeadWithInfo
-                      label="Uncached prompt tokens"
-                      info="Input tokens in the selected range that were neither read from nor written to the prompt cache"
-                    />
-                  </TableHead>
-                  <TableHead className="text-right">
-                    <HeadWithInfo
-                      label="Cache hit ratio"
-                      info="Share of this key's total input tokens that were served from the prompt cache"
-                    />
-                  </TableHead>
-                  <TableHead className="text-right">
-                    <HeadWithInfo
-                      label="Realized caching savings"
-                      info="Dollars this key actually saved because cached input was billed at the discounted cache-read rate"
-                    />
-                  </TableHead>
-                  <TableHead className="text-right">
-                    <HeadWithInfo
-                      label="Est. savings left"
-                      info="Approximate dollars this key could still save if its uncached input had hit the cache at the portfolio's realized discount"
-                    />
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {leakage.rows.map((row) => (
-                  <TableRow key={row.apiKey}>
-                    <TableCell className="font-medium">
-                      {row.keyAlias || `${row.apiKey.slice(0, 8)}...`}
-                      {row.teamId && <span className="ml-1 text-xs text-muted-foreground">({row.teamId})</span>}
-                    </TableCell>
-                    <TableCell className="text-right">{formatNumberWithCommas(row.uncachedPromptTokens)}</TableCell>
-                    <TableCell className="text-right">{pct(row.cacheHitRatio)}</TableCell>
-                    <TableCell className="text-right">{usd(row.realizedCachingSavings)}</TableCell>
-                    <TableCell className="text-right">
-                      {row.estSavingsLeft == null ? "—" : usd(row.estSavingsLeft)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>

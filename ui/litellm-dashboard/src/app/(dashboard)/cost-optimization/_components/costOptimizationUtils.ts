@@ -1,5 +1,13 @@
 import { DailyData } from "@/components/UsagePage/types";
 import { ToolSpendDailyEntry, ToolSpendEntry } from "@/components/networking";
+import { formatNumberWithCommas } from "@/utils/dataUtils";
+
+export const usd = (value: number): string => {
+  const decimals = value > 0 && value < 1 ? 4 : 2;
+  return `$${formatNumberWithCommas(value, decimals)}`;
+};
+
+export const pct = (ratio: number): string => `${formatNumberWithCommas(ratio * 100, 1)}%`;
 
 export interface CacheLeakageRow {
   apiKey: string;

@@ -35,7 +35,7 @@ const CostOptimizationView: React.FC<CostOptimizationViewProps> = ({ accessToken
     {
       key: "caching",
       label: "Prompt Caching",
-      children: <PromptCachingTab accessToken={accessToken} />,
+      children: <PromptCachingTab accessToken={accessToken} userId={userId} userRole={userRole} />,
     },
   ];
 
