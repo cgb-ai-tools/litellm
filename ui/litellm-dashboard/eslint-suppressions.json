@@ -1924,9 +1924,6 @@
   "src/components/organization/organization_view.tsx": {
     "no-restricted-imports": {
       "count": 1
-    },
-    "unused-imports/no-unused-imports": {
-      "count": 1
     }
   },
   "src/components/page_utils.test.ts": {
