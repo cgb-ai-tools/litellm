@@ -19,7 +19,6 @@ from litellm.llms.custom_httpx.http_handler import (
 )
 from litellm.proxy._experimental.mcp_server.auth.token_endpoint_auth import (
     TokenEndpointAuthConfigError,
-    build_token_endpoint_client_auth,
 )
 from litellm.proxy._experimental.mcp_server.bridge_token_flow import (
     _bridge_mint_error_response,
@@ -41,7 +40,9 @@ from litellm.proxy._experimental.mcp_server.faults import (
 )
 from litellm.proxy._experimental.mcp_server.oauth_utils import (
     TOKEN_NO_CACHE_HEADERS,
+    build_upstream_oauth2_token_request,
     get_request_base_url,
+    resolve_upstream_resource,
     validate_trusted_redirect_uri,
     well_known_root_suffix,
 )
@@ -570,6 +571,7 @@ def _redirect_to_upstream_authorize(
     to the upstream authorize endpoint verbatim, no relay state cookie is set, and the upstream
     enforces its own registered redirect binding for the client."""
     scope_value = scope or (" ".join(mcp_server.scopes) if mcp_server.scopes else None)
+    upstream_resource = resolve_upstream_resource(mcp_server)
     passthrough_params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -578,6 +580,7 @@ def _redirect_to_upstream_authorize(
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
         **({"scope": scope_value} if scope_value else {}),
+        **({"resource": upstream_resource} if upstream_resource else {}),
     }
     parsed_auth_url = urlparse(mcp_server.authorization_url or "")
     merged_params = {**dict(parse_qsl(parsed_auth_url.query)), **passthrough_params}
@@ -676,6 +679,10 @@ async def authorize_with_server(
     if code_challenge_method:
         params["code_challenge_method"] = code_challenge_method
 
+    upstream_resource = resolve_upstream_resource(mcp_server)
+    if upstream_resource:
+        params["resource"] = upstream_resource
+
     parsed_auth_url = urlparse(mcp_server.authorization_url)
     existing_params = dict(parse_qsl(parsed_auth_url.query))
     existing_params.update(params)
@@ -725,8 +732,8 @@ async def exchange_token_with_server(
     resolved_client_id = mcp_server.client_id if mcp_server.client_id else client_id
     resolved_client_secret = mcp_server.client_secret if mcp_server.client_id else client_secret
     try:
-        client_auth = build_token_endpoint_client_auth(
-            auth_method=mcp_server.token_endpoint_auth_method,
+        token_request = build_upstream_oauth2_token_request(
+            mcp_server,
             client_id=resolved_client_id,
             client_secret=resolved_client_secret,
         )
@@ -764,7 +771,7 @@ async def exchange_token_with_server(
         token_data: dict = {
             "grant_type": "refresh_token",
             "refresh_token": upstream_refresh_token,
-            **client_auth.body,
+            **token_request.body,
         }
         refresh_request_scope = scope or bridge_upstream_scope
         if refresh_request_scope:
@@ -803,7 +810,7 @@ async def exchange_token_with_server(
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": resolved_redirect_uri,
-            **client_auth.body,
+            **token_request.body,
         }
         if code_verifier:
             token_data["code_verifier"] = code_verifier
@@ -814,11 +821,12 @@ async def exchange_token_with_server(
             if not isinstance(prepared, _BridgeMintReady):
                 return _bridge_mint_error_response(prepared)
             bridge_mint_ready = prepared
+
     async_client = get_async_httpx_client(llm_provider=httpxSpecialProvider.Oauth2Check)
     try:
         response = await async_client.post(
             mcp_server.token_url,
-            headers={"Accept": "application/json", **client_auth.headers},
+            headers={"Accept": "application/json", **token_request.headers},
             data=token_data,
         )
         if response is not None:
