@@ -27,14 +27,17 @@ describe("PromptCachingTab", () => {
   it("renders the cache leakage table alongside the caching settings", async () => {
     mockGetGeneralSettingsCall.mockResolvedValue([]);
 
-    const { getByTestId } = render(<PromptCachingTab accessToken="test-token" userId="u1" userRole="internal_user" />);
+    const activity = {
+      dateValue: {},
+      onDateChange: vi.fn(),
+      results: [],
+      loading: false,
+      isFetchingMore: false,
+    };
+    const { getByTestId } = render(<PromptCachingTab accessToken="test-token" activity={activity} />);
 
     expect(getByTestId("caching-settings")).toBeInTheDocument();
     expect(getByTestId("cache-leakage-card")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(mockCacheLeakageCard).toHaveBeenCalledWith(
-        expect.objectContaining({ accessToken: "test-token", userId: "u1", userRole: "internal_user" }),
-      ),
-    );
+    await waitFor(() => expect(mockCacheLeakageCard).toHaveBeenCalledWith(expect.objectContaining({ activity })));
   });
 });

@@ -4,16 +4,9 @@ import type { ToolSpendResponse } from "@/components/networking";
 
 import type { DailyData, SpendMetrics } from "@/components/UsagePage/types";
 
-const mockUsePaginatedDailyActivity = vi.fn();
-
-vi.mock("@/app/(dashboard)/usage/_components/hooks/usePaginatedDailyActivity", () => ({
-  usePaginatedDailyActivity: (args: unknown) => mockUsePaginatedDailyActivity(args),
-}));
-
 const mockGetToolSpend = vi.fn();
 
 vi.mock("@/components/networking", () => ({
-  userDailyActivityCall: vi.fn(),
   getToolSpend: (...args: unknown[]) => mockGetToolSpend(...args),
 }));
 
@@ -66,9 +59,19 @@ const day = (date: string, metrics: Partial<SpendMetrics>): DailyData => ({
 });
 
 const renderWith = (results: DailyData[], toolSpend = emptyToolSpend) => {
-  mockUsePaginatedDailyActivity.mockReturnValue({ data: { results }, loading: false, isFetchingMore: false });
   mockGetToolSpend.mockResolvedValue(toolSpend);
-  return render(<UsageTab accessToken="test-token" userId="u1" userRole="proxy_admin" />);
+  return render(
+    <UsageTab
+      accessToken="test-token"
+      activity={{
+        dateValue: { from: new Date("2026-07-01"), to: new Date("2026-07-14") },
+        onDateChange: vi.fn(),
+        results,
+        loading: false,
+        isFetchingMore: false,
+      }}
+    />,
+  );
 };
 
 describe("UsageTab", () => {

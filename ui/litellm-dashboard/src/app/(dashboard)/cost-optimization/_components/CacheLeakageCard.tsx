@@ -1,28 +1,19 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { Tooltip } from "antd";
 import { InfoCircleOutlined } from "@ant-design/icons";
 
 import AdvancedDatePicker from "@/components/shared/advanced_date_picker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { userDailyActivityCall } from "@/components/networking";
-import { DailyData } from "@/components/UsagePage/types";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
-import { all_admin_roles } from "@/utils/roles";
-import { usePaginatedDailyActivity } from "@/app/(dashboard)/usage/_components/hooks/usePaginatedDailyActivity";
 import { computeCacheLeakage, pct, usd } from "./costOptimizationUtils";
+import { DailyActivityRange } from "./useDailyActivityRange";
 
 interface CacheLeakageCardProps {
-  accessToken: string | null;
-  userId: string | null;
-  userRole: string;
+  activity: DailyActivityRange;
 }
-
-type DateRange = { from?: Date; to?: Date };
-
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 const HeadWithInfo = ({ label, info }: { label: string; info: string }) => (
   <span className="inline-flex items-center gap-1">
@@ -33,22 +24,8 @@ const HeadWithInfo = ({ label, info }: { label: string; info: string }) => (
   </span>
 );
 
-const CacheLeakageCard: React.FC<CacheLeakageCardProps> = ({ accessToken, userId, userRole }) => {
-  const initialFrom = useMemo(() => new Date(new Date().getTime() - THIRTY_DAYS_MS), []);
-  const initialTo = useMemo(() => new Date(), []);
-  const [dateValue, setDateValue] = useState<DateRange>({ from: initialFrom, to: initialTo });
-
-  const startTime = dateValue.from ?? null;
-  const endTime = dateValue.to ?? null;
-  const effectiveUserId = all_admin_roles.includes(userRole) ? null : userId;
-
-  const { data, loading, isFetchingMore } = usePaginatedDailyActivity({
-    fetchFn: userDailyActivityCall,
-    args: [accessToken, startTime, endTime, effectiveUserId],
-    enabled: !!accessToken && !!startTime && !!endTime,
-  });
-
-  const results = data.results as DailyData[];
+const CacheLeakageCard: React.FC<CacheLeakageCardProps> = ({ activity }) => {
+  const { dateValue, onDateChange, results, loading, isFetchingMore } = activity;
   const leakage = useMemo(() => computeCacheLeakage(results), [results]);
 
   return (
@@ -63,7 +40,7 @@ const CacheLeakageCard: React.FC<CacheLeakageCardProps> = ({ accessToken, userId
               realized cache-read discount.
             </p>
           </div>
-          <AdvancedDatePicker value={dateValue} onValueChange={(v) => setDateValue(v)} />
+          <AdvancedDatePicker value={dateValue} onValueChange={onDateChange} />
         </div>
       </CardHeader>
       <CardContent>

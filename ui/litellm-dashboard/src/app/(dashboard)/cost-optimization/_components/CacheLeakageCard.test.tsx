@@ -3,16 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { DailyData, KeyMetricWithMetadata, SpendMetrics } from "@/components/UsagePage/types";
 
-const mockUsePaginatedDailyActivity = vi.fn();
-
-vi.mock("@/app/(dashboard)/usage/_components/hooks/usePaginatedDailyActivity", () => ({
-  usePaginatedDailyActivity: (args: unknown) => mockUsePaginatedDailyActivity(args),
-}));
-
-vi.mock("@/components/networking", () => ({
-  userDailyActivityCall: vi.fn(),
-}));
-
 vi.mock("@/components/shared/advanced_date_picker", () => ({
   __esModule: true,
   default: () => <div data-testid="date-picker" />,
@@ -51,10 +41,18 @@ const dayWithKeys = (date: string, apiKeys: Record<string, KeyMetricWithMetadata
   },
 });
 
-const renderWith = (results: DailyData[], userRole = "proxy_admin") => {
-  mockUsePaginatedDailyActivity.mockReturnValue({ data: { results }, loading: false, isFetchingMore: false });
-  return render(<CacheLeakageCard accessToken="test-token" userId="u1" userRole={userRole} />);
-};
+const renderWith = (results: DailyData[]) =>
+  render(
+    <CacheLeakageCard
+      activity={{
+        dateValue: {},
+        onDateChange: vi.fn(),
+        results,
+        loading: false,
+        isFetchingMore: false,
+      }}
+    />,
+  );
 
 describe("CacheLeakageCard", () => {
   it("ranks leaking keys by uncached prompt tokens and shows cache hit ratio", () => {
@@ -76,13 +74,5 @@ describe("CacheLeakageCard", () => {
 
     expect(getByText("No key usage in this range.")).toBeInTheDocument();
     expect(queryByRole("table")).not.toBeInTheDocument();
-  });
-
-  it("scopes the activity query to the caller when the user is not an admin", () => {
-    renderWith([dayWithKeys("2026-07-12", {})], "internal_user");
-
-    expect(mockUsePaginatedDailyActivity).toHaveBeenCalledWith(
-      expect.objectContaining({ args: ["test-token", expect.any(Date), expect.any(Date), "u1"] }),
-    );
   });
 });

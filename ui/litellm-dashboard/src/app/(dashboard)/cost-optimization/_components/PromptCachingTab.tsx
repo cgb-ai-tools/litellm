@@ -9,14 +9,14 @@ import {
   generalSettingsItem,
 } from "@/app/(dashboard)/router-settings/_components/general_settings";
 import CacheLeakageCard from "./CacheLeakageCard";
+import { DailyActivityRange } from "./useDailyActivityRange";
 
 interface PromptCachingTabProps {
   accessToken: string | null;
-  userId: string | null;
-  userRole: string;
+  activity: DailyActivityRange;
 }
 
-const PromptCachingTab: React.FC<PromptCachingTabProps> = ({ accessToken, userId, userRole }) => {
+const PromptCachingTab: React.FC<PromptCachingTabProps> = ({ accessToken, activity }) => {
   const [settings, setSettings] = useState<generalSettingsItem[]>([]);
 
   const loadSettings = useCallback(() => {
@@ -48,7 +48,7 @@ const PromptCachingTab: React.FC<PromptCachingTabProps> = ({ accessToken, userId
   return (
     <div className="w-full space-y-6">
       <PromptCachingPanel accessToken={accessToken} settings={settings} onChange={handleChange} />
-      <CacheLeakageCard accessToken={accessToken} userId={userId} userRole={userRole} />
+      <CacheLeakageCard activity={activity} />
     </div>
   );
 };

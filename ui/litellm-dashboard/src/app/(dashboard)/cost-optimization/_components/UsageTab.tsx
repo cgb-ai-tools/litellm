@@ -6,22 +6,16 @@ import { Collapse } from "antd";
 import { AreaChart, BarChart, DonutChart, DEFAULT_COLOR_CYCLE } from "@/components/shared/charts";
 import AdvancedDatePicker from "@/components/shared/advanced_date_picker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getToolSpend, ToolSpendResponse, userDailyActivityCall } from "@/components/networking";
-import { DailyData, SpendMetrics } from "@/components/UsagePage/types";
+import { getToolSpend, ToolSpendResponse } from "@/components/networking";
+import { SpendMetrics } from "@/components/UsagePage/types";
 import { formatNumberWithCommas } from "@/utils/dataUtils";
-import { all_admin_roles } from "@/utils/roles";
-import { usePaginatedDailyActivity } from "@/app/(dashboard)/usage/_components/hooks/usePaginatedDailyActivity";
 import { buildDailyToolSeries, topToolsBySpend, usd } from "./costOptimizationUtils";
+import { DailyActivityRange } from "./useDailyActivityRange";
 
 interface UsageTabProps {
   accessToken: string | null;
-  userId: string | null;
-  userRole: string;
+  activity: DailyActivityRange;
 }
-
-type DateRange = { from?: Date; to?: Date };
-
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 const EMPTY_TOOL_SPEND: ToolSpendResponse = {
   by_tool: [],
@@ -87,23 +81,11 @@ const SummaryCard = ({ label, value, hint }: { label: string; value: string; hin
   </Card>
 );
 
-const UsageTab: React.FC<UsageTabProps> = ({ accessToken, userId, userRole }) => {
-  const initialFrom = useMemo(() => new Date(new Date().getTime() - THIRTY_DAYS_MS), []);
-  const initialTo = useMemo(() => new Date(), []);
-  const [dateValue, setDateValue] = useState<DateRange>({ from: initialFrom, to: initialTo });
+const UsageTab: React.FC<UsageTabProps> = ({ accessToken, activity }) => {
+  const { dateValue, onDateChange, results, loading, isFetchingMore } = activity;
 
   const startTime = dateValue.from ?? null;
   const endTime = dateValue.to ?? null;
-  const isAdmin = all_admin_roles.includes(userRole);
-  const effectiveUserId = isAdmin ? null : userId;
-
-  const { data, loading, isFetchingMore } = usePaginatedDailyActivity({
-    fetchFn: userDailyActivityCall,
-    args: [accessToken, startTime, endTime, effectiveUserId],
-    enabled: !!accessToken && !!startTime && !!endTime,
-  });
-
-  const results = data.results as DailyData[];
 
   const toolSpendEnabled = !!accessToken && !!startTime && !!endTime;
   const rangeKey = startTime && endTime ? `${isoDay(startTime)}|${isoDay(endTime)}` : "";
@@ -171,7 +153,7 @@ const UsageTab: React.FC<UsageTabProps> = ({ accessToken, userId, userRole }) =>
     <div className="w-full space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <MethodologyNote />
-        <AdvancedDatePicker value={dateValue} onValueChange={(v) => setDateValue(v)} />
+        <AdvancedDatePicker value={dateValue} onValueChange={onDateChange} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
