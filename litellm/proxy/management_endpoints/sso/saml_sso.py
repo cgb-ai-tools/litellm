@@ -28,6 +28,7 @@ import os
 import secrets
 import time
 from typing import cast
+from urllib.parse import parse_qsl
 
 from fastapi import HTTPException, Request, status
 from fastapi.responses import RedirectResponse
@@ -59,6 +60,7 @@ _SAML_CONSUMED_ASSERTION_CACHE_PREFIX = "saml_consumed_assertion"
 _SAML_AUTHN_REQUEST_TTL_SECONDS = 600
 _SAML_IDP_METADATA_TTL_SECONDS = 3600
 _SAML_METADATA_FETCH_TIMEOUT_SECONDS = 10
+_SAML_MAX_POST_BYTES = 5 * 1024 * 1024
 # The replay guard tracks each assertion's NotOnOrAfter so it spans the full
 # validity window; the floor covers IdPs that issue hour-long assertions or omit
 # the timestamp, and the cap bounds cache growth.
@@ -279,6 +281,30 @@ class SAMLAuthHandler:
         return metadata
 
     @staticmethod
+    async def read_acs_post_data(request: Request) -> dict[str, str]:
+        """Read the ACS POST form under a hard size cap before any base64/XML decoding.
+
+        Bounds both Content-Length-declared and chunked requests so an unauthenticated
+        caller cannot force unbounded buffering while decoding the SAMLResponse."""
+        declared = request.headers.get("content-length")
+        if declared is not None and declared.isdigit() and int(declared) > _SAML_MAX_POST_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="SAML response exceeds the maximum allowed size.",
+            )
+
+        body = bytearray()
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > _SAML_MAX_POST_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="SAML response exceeds the maximum allowed size.",
+                )
+
+        return dict(parse_qsl(body.decode("utf-8", "replace")))
+
+    @staticmethod
     async def handle_acs(request: Request, cache: DualCache, post_data: dict[str, str]) -> CustomOpenID:
         auth = await SAMLAuthHandler._build_auth(request, cache, post_data=post_data)
         browser_request_id = request.cookies.get(_SAML_AUTHN_STATE_COOKIE)
@@ -359,6 +385,14 @@ class SAMLAuthHandler:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Unsolicited (IdP-initiated) SAML responses are disabled.",
+            )
+        elif cache.redis_cache is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=(
+                    "Unsolicited (IdP-initiated) SAML responses require a shared Redis cache "
+                    "so the replay guard is enforced across every worker."
+                ),
             )
 
         assertion_id = cast(str | None, auth.get_last_assertion_id())  # cast-ok: untyped python3-saml

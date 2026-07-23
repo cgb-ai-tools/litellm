@@ -12,7 +12,7 @@ import datetime
 import time
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 pytest.importorskip(
     "onelogin", reason="python3-saml (saml extra) is required for SAML SSO tests"
@@ -25,15 +25,28 @@ from cryptography.x509.oid import NameOID
 from onelogin.saml2.utils import OneLogin_Saml2_Utils
 from starlette.datastructures import URL
 
+from typing import cast
+
 from litellm.caching.dual_cache import DualCache
+from litellm.caching.in_memory_cache import InMemoryCache
+from litellm.caching.redis_cache import RedisCache
 from litellm.proxy._types import LitellmUserRoles
 from litellm.proxy.management_endpoints.sso.saml_sso import (
     _SAML_AUTHN_REQUEST_CACHE_PREFIX,
     _SAML_AUTHN_STATE_COOKIE,
+    _SAML_MAX_POST_BYTES,
     _SAML_REPLAY_GUARD_DEFAULT_TTL_SECONDS,
     _SAML_REPLAY_GUARD_MAX_TTL_SECONDS,
     SAMLAuthHandler,
 )
+
+
+def _shared_cache(store=None):
+    """A DualCache whose replay guard is backed by a shared, atomic store.
+
+    An InMemoryCache instance stands in for Redis; passing the same instance to
+    two DualCaches simulates two workers sharing one atomic backend."""
+    return DualCache(redis_cache=cast(RedisCache, store or InMemoryCache()))
 
 IDP_ENTITY = "https://idp.example.com/metadata"
 SP_ENTITY = "https://proxy.example.com/sso/saml/metadata"
@@ -210,7 +223,7 @@ async def test_valid_idp_initiated_login_maps_assertion_to_user(saml_env_idp_ini
     key_pem, cert_pem = saml_env_idp_initiated
     resp = _build_signed_response(key_pem, cert_pem)
 
-    result = await _acs(_b64(resp), DualCache())
+    result = await _acs(_b64(resp), _shared_cache())
 
     assert result.email == "alice@example.com"
     assert result.id == "alice@example.com"
@@ -373,7 +386,7 @@ async def test_unsolicited_response_rejected_by_default(saml_env):
 @pytest.mark.asyncio
 async def test_idp_initiated_assertion_replay_is_rejected(saml_env_idp_initiated):
     key_pem, cert_pem = saml_env_idp_initiated
-    cache = DualCache()
+    cache = _shared_cache()
     resp = _build_signed_response(key_pem, cert_pem, email="bob@example.com")
 
     first = await _acs(_b64(resp), cache)
@@ -406,7 +419,7 @@ async def test_invalid_email_in_assertion_is_rejected_cleanly(saml_env_idp_initi
     )
 
     with pytest.raises(HTTPException) as exc:
-        await _acs(_b64(resp), DualCache())
+        await _acs(_b64(resp), _shared_cache())
     assert exc.value.status_code == 401
     assert "invalid subject or email" in exc.value.detail
 
@@ -425,7 +438,7 @@ async def test_email_less_assertion_rejected_when_domain_restriction_configured(
     )
 
     with pytest.raises(HTTPException) as exc:
-        await _acs(_b64(resp), DualCache())
+        await _acs(_b64(resp), _shared_cache())
     assert exc.value.status_code == 401
     assert "ALLOWED_EMAIL_DOMAINS" in exc.value.detail
 
@@ -440,7 +453,7 @@ async def test_email_less_assertion_allowed_without_domain_restriction(saml_env_
         attributes={"givenName": ["Alice"]},
     )
 
-    result = await _acs(_b64(resp), DualCache())
+    result = await _acs(_b64(resp), _shared_cache())
     assert result.email is None
     assert result.id == "opaque-persistent-id-123"
 
@@ -459,7 +472,7 @@ async def test_custom_email_attribute_override(saml_env_idp_initiated, monkeypat
         },
     )
 
-    result = await _acs(_b64(resp), DualCache())
+    result = await _acs(_b64(resp), _shared_cache())
     assert result.email == "real@corp.example.com"
 
 
@@ -475,7 +488,7 @@ async def test_team_ids_extracted_from_groups_attribute(saml_env_idp_initiated):
         },
     )
 
-    result = await _acs(_b64(resp), DualCache())
+    result = await _acs(_b64(resp), _shared_cache())
     assert result.team_ids == ["team-a", "team-b"]
 
 
@@ -538,3 +551,70 @@ def test_is_saml_configured_reflects_env(monkeypatch):
 
     monkeypatch.setenv("SAML_IDP_METADATA_URL", "https://idp.example.com/metadata.xml")
     assert SAMLAuthHandler.is_saml_configured() is True
+
+
+@pytest.mark.asyncio
+async def test_idp_initiated_rejected_without_shared_cache(saml_env_idp_initiated):
+    key_pem, cert_pem = saml_env_idp_initiated
+    resp = _build_signed_response(key_pem, cert_pem)
+
+    with pytest.raises(HTTPException) as exc:
+        await _acs(_b64(resp), DualCache())
+    assert exc.value.status_code == 401
+    assert "shared Redis cache" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_idp_initiated_replay_rejected_across_workers(saml_env_idp_initiated):
+    key_pem, cert_pem = saml_env_idp_initiated
+    shared_store = InMemoryCache()
+    worker_one = _shared_cache(shared_store)
+    worker_two = _shared_cache(shared_store)
+    resp = _build_signed_response(key_pem, cert_pem, email="bob@example.com")
+
+    first = await _acs(_b64(resp), worker_one)
+    assert first.email == "bob@example.com"
+
+    with pytest.raises(HTTPException) as exc:
+        await _acs(_b64(resp), worker_two)
+    assert exc.value.status_code == 401
+
+
+class _FakeChunkedRequest:
+    def __init__(self, chunks, content_length=None):
+        self._chunks = chunks
+        self.headers = {} if content_length is None else {"content-length": content_length}
+
+    async def stream(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+@pytest.mark.asyncio
+async def test_read_acs_post_data_parses_form():
+    body = b"SAMLResponse=abc123&RelayState=%2Fui%2F"
+    request = _FakeChunkedRequest([body], content_length=str(len(body)))
+
+    post_data = await SAMLAuthHandler.read_acs_post_data(cast(Request, request))
+
+    assert post_data == {"SAMLResponse": "abc123", "RelayState": "/ui/"}
+
+
+@pytest.mark.asyncio
+async def test_read_acs_post_data_rejects_oversized_content_length():
+    request = _FakeChunkedRequest([b""], content_length=str(_SAML_MAX_POST_BYTES + 1))
+
+    with pytest.raises(HTTPException) as exc:
+        await SAMLAuthHandler.read_acs_post_data(cast(Request, request))
+    assert exc.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_read_acs_post_data_rejects_oversized_stream_without_content_length():
+    chunk = b"a" * (1024 * 1024)
+    chunk_count = _SAML_MAX_POST_BYTES // len(chunk) + 2
+    request = _FakeChunkedRequest([chunk] * chunk_count)
+
+    with pytest.raises(HTTPException) as exc:
+        await SAMLAuthHandler.read_acs_post_data(cast(Request, request))
+    assert exc.value.status_code == 413

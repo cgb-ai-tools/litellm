@@ -1985,21 +1985,16 @@ async def saml_callback(request: Request):
             code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
-    form = await request.form()
-    saml_response = form.get("SAMLResponse")
-    relay_state = form.get("RelayState")
-    if not isinstance(saml_response, str):
+    post_data = await SAMLAuthHandler.read_acs_post_data(request)
+    if "SAMLResponse" not in post_data:
         raise HTTPException(status_code=400, detail="Missing SAMLResponse in callback request.")
-
-    post_data = {"SAMLResponse": saml_response}
-    if isinstance(relay_state, str):
-        post_data["RelayState"] = relay_state
 
     result = await SAMLAuthHandler.handle_acs(request=request, cache=user_api_key_cache, post_data=post_data)
 
     await _raise_if_sso_exceeds_free_user_limit(premium_user, prisma_client)
 
     ui_access_mode = general_settings.get("ui_access_mode", None)
+    relay_state = post_data.get("RelayState")
     cp_return_to: str | None = (
         relay_state
         if isinstance(relay_state, str) and SSOAuthenticationHandler._validate_return_to(relay_state)

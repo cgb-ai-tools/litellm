@@ -7433,10 +7433,10 @@ async def test_saml_callback_enforces_free_sso_user_limit_after_validation():
         call_order.append("count")
         return 6
 
-    async def _form():
-        return {"SAMLResponse": "signed-response"}
+    async def _stream():
+        yield b"SAMLResponse=signed-response"
 
-    request_double = SimpleNamespace(cookies={}, form=_form)
+    request_double = SimpleNamespace(cookies={}, headers={}, stream=_stream)
 
     with patch.dict(os.environ, {"DISABLE_ADMIN_UI": "false"}), patch(
         "litellm.proxy.proxy_server.premium_user", False
